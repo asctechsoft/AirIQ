@@ -7,24 +7,22 @@ const connectMQTT = require('./src/mqtt/subscriber');
 
 const app = express();
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Rate limiting
 app.use('/api/', rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
   message: { message: 'Quá nhiều request, thử lại sau!' }
 }));
 
-// Routes
 app.use('/api/auth', require('./src/routes/auth'));
 app.use('/api/sensor', require('./src/routes/sensor'));
+app.use('/api/alerts', require('./src/routes/alerts'));
+app.use('/api/settings', require('./src/routes/settings'));
 
 app.get('/', (req, res) => res.json({ message: 'IoT Backend running!' }));
 
-// Khởi động
 const PORT = process.env.PORT || 3000;
 connectDB().then(() => {
   connectMQTT();

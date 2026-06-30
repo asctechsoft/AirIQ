@@ -40,4 +40,30 @@ router.get('/history', auth, async (req, res) => {
   }
 });
 
+// Xuất CSV
+router.get('/export', auth, async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const data = await SensorData.find({
+      timestamp: {
+        $gte: new Date(from || Date.now() - 24 * 60 * 60 * 1000),
+        $lte: new Date(to   || Date.now()),
+      }
+    }).sort({ timestamp: 1 });
+
+    const rows = [
+      'Thời gian,Thiết bị,Nhiệt độ (°C),Độ ẩm (%),CO2 (ppm)',
+      ...data.map(d =>
+        `${new Date(d.timestamp).toISOString()},${d.deviceId},${d.temperature},${d.humidity},${d.co2}`
+      ),
+    ].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="sensor_data.csv"');
+    res.send(Buffer.from('﻿' + rows, 'utf8'));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 module.exports = router;

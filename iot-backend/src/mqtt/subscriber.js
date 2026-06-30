@@ -1,5 +1,7 @@
 const mqtt = require('mqtt');
 const SensorData = require('../models/SensorData');
+const Alert = require('../models/Alert');
+const Settings = require('../models/Settings');
 
 const connectMQTT = () => {
   const client = mqtt.connect(`mqtts://${process.env.MQTT_HOST}:8883`, {
@@ -22,16 +24,17 @@ const connectMQTT = () => {
     try {
       const data = JSON.parse(message.toString());
       if (data.api_key !== process.env.DEVICE_API_KEY) {
-        console.log('Invalid API key:', data.api_key, '!==', process.env.DEVICE_API_KEY);
+        console.log('Invalid API key');
         return;
       }
-      await SensorData.create({
+      const saved = await SensorData.create({
         deviceId:    data.device_id,
         temperature: data.temperature,
         humidity:    data.humidity,
         co2:         data.co2,
       });
       console.log(`Saved: temp=${data.temperature} hum=${data.humidity} co2=${data.co2}`);
+      await checkThresholds(saved);
     } catch (err) {
       console.error('MQTT message error:', err);
     }
@@ -41,5 +44,39 @@ const connectMQTT = () => {
   client.on('disconnect', () => console.log('MQTT disconnected!'));
   client.on('reconnect', () => console.log('MQTT reconnecting...'));
 };
+
+async function checkThresholds(data) {
+  try {
+    let s = await Settings.findOne();
+    if (!s) s = await Settings.create({});
+    const th = s.thresholds;
+
+    const makeAlert = (type, value, threshold, message) =>
+      Alert.create({ deviceId: data.deviceId, type, value, threshold, message });
+
+    if (data.co2 >= th.co2_danger) {
+      await makeAlert('co2', data.co2, th.co2_danger,
+        `CO₂ nguy hiểm: ${data.co2}ppm (ngưỡng ${th.co2_danger}ppm)`);
+    } else if (data.co2 >= th.co2_warn) {
+      await makeAlert('co2', data.co2, th.co2_warn,
+        `CO₂ cao: ${data.co2}ppm (ngưỡng ${th.co2_warn}ppm)`);
+    }
+
+    if (data.temperature >= th.temp_max) {
+      await makeAlert('temperature', data.temperature, th.temp_max,
+        `Nhiệt độ cao: ${data.temperature}°C (ngưỡng ${th.temp_max}°C)`);
+    }
+
+    if (data.humidity < th.humidity_min) {
+      await makeAlert('humidity', data.humidity, th.humidity_min,
+        `Độ ẩm quá thấp: ${data.humidity}% (ngưỡng ${th.humidity_min}%)`);
+    } else if (data.humidity > th.humidity_max) {
+      await makeAlert('humidity', data.humidity, th.humidity_max,
+        `Độ ẩm quá cao: ${data.humidity}% (ngưỡng ${th.humidity_max}%)`);
+    }
+  } catch (err) {
+    console.error('checkThresholds error:', err);
+  }
+}
 
 module.exports = connectMQTT;

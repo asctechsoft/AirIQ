@@ -4,7 +4,7 @@
     <aside class="sidebar">
       <div class="brand">
         <span class="brand-icon">🌬️</span>
-        <span class="brand-name">AirWatch</span>
+        <span class="brand-name">AirIQ</span>
       </div>
 
       <nav class="nav">
@@ -17,13 +17,16 @@
         >
           <span class="nav-icon">{{ item.icon }}</span>
           <span class="nav-label">{{ item.label }}</span>
+          <span v-if="item.id === 'alerts' && unresolvedCount > 0" class="nav-badge">
+            {{ unresolvedCount }}
+          </span>
         </a>
       </nav>
 
       <div class="sidebar-footer">
         <div class="device-status">
           <span class="status-dot" :class="isOnline ? 'online' : 'offline'"></span>
-          <span class="status-text">{{ isOnline ? 'esp32-room1' : 'Offline' }}</span>
+          <span class="status-text">{{ latest.deviceId || 'Offline' }}</span>
         </div>
         <button class="logout-btn" @click="logout">⎋ Đăng xuất</button>
       </div>
@@ -38,17 +41,14 @@
           <span class="last-update">Cập nhật: {{ lastUpdate }}</span>
         </div>
         <div class="topbar-right">
-          <div class="air-index" :class="airQualityClass">
-            {{ airQualityLabel }}
-          </div>
+          <div class="air-index" :class="airQualityClass">{{ airQualityLabel }}</div>
         </div>
       </header>
 
       <!-- TAB: Dashboard -->
       <div v-if="activeTab === 'dashboard'" class="tab-content">
-        <!-- Metric cards -->
         <div class="metrics">
-          <div class="metric-card" :class="{ danger: latest.temperature > 35 }">
+          <div class="metric-card" :class="{ danger: tempStatus === 'danger' }">
             <div class="metric-top">
               <span class="metric-label">Nhiệt độ</span>
               <span class="metric-icon">🌡️</span>
@@ -57,12 +57,12 @@
             <div class="metric-bar">
               <div class="metric-fill temp" :style="{ width: tempPct + '%' }"></div>
             </div>
-            <div class="metric-hint" :class="latest.temperature > 35 ? 'warn' : 'ok'">
-              {{ latest.temperature > 35 ? '⚠ Quá nóng' : '✓ Bình thường' }}
+            <div class="metric-hint" :class="tempStatus === 'danger' ? 'warn' : 'ok'">
+              {{ tempStatus === 'danger' ? '⚠ Quá nóng' : '✓ Bình thường' }}
             </div>
           </div>
 
-          <div class="metric-card" :class="{ warning: latest.humidity < 30 || latest.humidity > 70 }">
+          <div class="metric-card" :class="{ warning: humidityStatus === 'warning' }">
             <div class="metric-top">
               <span class="metric-label">Độ ẩm</span>
               <span class="metric-icon">💧</span>
@@ -71,12 +71,14 @@
             <div class="metric-bar">
               <div class="metric-fill hum" :style="{ width: (latest.humidity ?? 0) + '%' }"></div>
             </div>
-            <div class="metric-hint" :class="(latest.humidity < 30 || latest.humidity > 70) ? 'warn' : 'ok'">
-              {{ latest.humidity < 30 ? '⚠ Quá khô' : latest.humidity > 70 ? '⚠ Quá ẩm' : '✓ Bình thường' }}
+            <div class="metric-hint" :class="humidityStatus === 'warning' ? 'warn' : 'ok'">
+              {{ humidityStatus === 'warning'
+                ? (latest.humidity < settings.humidity_min ? '⚠ Quá khô' : '⚠ Quá ẩm')
+                : '✓ Bình thường' }}
             </div>
           </div>
 
-          <div class="metric-card" :class="{ danger: latest.co2 > 1000, warning: latest.co2 > 800 && latest.co2 <= 1000 }">
+          <div class="metric-card" :class="{ danger: co2Status === 'danger', warning: co2Status === 'warning' }">
             <div class="metric-top">
               <span class="metric-label">CO₂</span>
               <span class="metric-icon">💨</span>
@@ -85,8 +87,8 @@
             <div class="metric-bar">
               <div class="metric-fill co2" :style="{ width: co2Pct + '%' }"></div>
             </div>
-            <div class="metric-hint" :class="latest.co2 > 1000 ? 'warn' : latest.co2 > 800 ? 'warn' : 'ok'">
-              {{ latest.co2 > 1000 ? '⚠ Nguy hiểm' : latest.co2 > 800 ? '⚠ CO₂ cao' : '✓ An toàn' }}
+            <div class="metric-hint" :class="co2Status !== 'normal' ? 'warn' : 'ok'">
+              {{ co2Status === 'danger' ? '⚠ Nguy hiểm' : co2Status === 'warning' ? '⚠ CO₂ cao' : '✓ An toàn' }}
             </div>
           </div>
 
@@ -97,35 +99,104 @@
             </div>
             <div class="metric-value device-id">{{ latest.deviceId ?? '--' }}</div>
             <div class="metric-bar">
-              <div class="metric-fill info-fill" style="width: 100%"></div>
+              <div class="metric-fill info-fill" style="width:100%"></div>
             </div>
             <div class="metric-hint ok">{{ formatTime(latest.timestamp) }}</div>
           </div>
         </div>
 
-        <!-- Chart -->
         <div class="chart-card">
           <div class="chart-header">
-            <span class="chart-title">📊 Lịch sử theo thời gian</span>
+            <span class="chart-title">📊 Lịch sử theo thời gian thực</span>
             <span class="chart-count">{{ history.length }} điểm dữ liệu</span>
           </div>
           <div class="chart-wrap">
-            <Line v-if="chartData.labels.length" :data="chartData" :options="chartOptions" />
+            <Line v-if="liveChartData.labels.length" :data="liveChartData" :options="chartOptions" />
             <div v-else class="no-data">Đang tải dữ liệu...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB: History -->
+      <div v-if="activeTab === 'history'" class="tab-content history-tab">
+        <div class="hist-toolbar">
+          <div class="date-range">
+            <div class="date-input">
+              <label>Từ ngày</label>
+              <input type="datetime-local" v-model="histFrom" />
+            </div>
+            <div class="date-input">
+              <label>Đến ngày</label>
+              <input type="datetime-local" v-model="histTo" />
+            </div>
+          </div>
+          <div class="hist-actions">
+            <button class="btn-primary" @click="fetchHistory" :disabled="histLoading">
+              {{ histLoading ? '...' : '🔍 Tìm kiếm' }}
+            </button>
+            <button class="btn-export" @click="exportCSV" :disabled="histData.length === 0">
+              📥 Xuất CSV
+            </button>
+          </div>
+        </div>
+
+        <div v-if="histData.length > 0" class="hist-stats">
+          <span class="stat-chip">{{ histData.length }} bản ghi</span>
+          <span class="stat-chip">🌡️ Min {{ histStats.tempMin }}°C · Max {{ histStats.tempMax }}°C</span>
+          <span class="stat-chip">💨 CO₂ Max {{ histStats.co2Max }}ppm</span>
+        </div>
+
+        <div class="chart-card chart-grow">
+          <div class="chart-header">
+            <span class="chart-title">📅 Dữ liệu lịch sử</span>
+          </div>
+          <div class="chart-wrap">
+            <Line v-if="histChartData.labels.length" :data="histChartData" :options="chartOptions" />
+            <div v-else-if="histLoading" class="no-data">Đang tải...</div>
+            <div v-else class="no-data">Chọn khoảng thời gian và nhấn Tìm kiếm</div>
           </div>
         </div>
       </div>
 
       <!-- TAB: Alerts -->
       <div v-if="activeTab === 'alerts'" class="tab-content">
-        <div class="alerts-wrap">
-          <div v-if="alerts.length === 0" class="empty-state">
-            <span>✅</span>
-            <p>Không có cảnh báo nào</p>
+        <div class="alerts-toolbar">
+          <div class="filter-tabs">
+            <button
+              :class="['filter-btn', alertFilter === 'unresolved' ? 'active' : '']"
+              @click="setAlertFilter('unresolved')"
+            >
+              Chưa xử lý
+              <span v-if="unresolvedCount > 0" class="badge">{{ unresolvedCount }}</span>
+            </button>
+            <button
+              :class="['filter-btn', alertFilter === 'all' ? 'active' : '']"
+              @click="setAlertFilter('all')"
+            >Tất cả</button>
           </div>
-          <div v-for="(a, i) in alerts" :key="i" class="alert-row">
-            <span class="alert-badge">⚠</span>
-            <span class="alert-msg">{{ a }}</span>
+          <button class="btn-ghost" @click="fetchAlerts">🔄 Làm mới</button>
+        </div>
+
+        <div v-if="alertsLoading" class="empty-state"><p>Đang tải...</p></div>
+        <div v-else-if="alertsData.length === 0" class="empty-state">
+          <span>✅</span><p>Không có cảnh báo nào</p>
+        </div>
+        <div v-else class="alerts-list">
+          <div
+            v-for="a in alertsData"
+            :key="a._id"
+            class="alert-row"
+            :class="[`alert-${a.type}`, { resolved: a.resolved }]"
+          >
+            <div class="alert-icon">{{ alertTypeIcon(a.type) }}</div>
+            <div class="alert-body">
+              <div class="alert-msg">{{ a.message }}</div>
+              <div class="alert-meta">{{ a.deviceId }} · {{ formatDateTime(a.createdAt) }}</div>
+            </div>
+            <div class="alert-actions">
+              <button v-if="!a.resolved" class="btn-resolve" @click="resolveAlert(a._id)">✓</button>
+              <button class="btn-del" @click="deleteAlert(a._id)">🗑</button>
+            </div>
           </div>
         </div>
       </div>
@@ -134,8 +205,8 @@
       <div v-if="activeTab === 'devices'" class="tab-content">
         <div class="device-card">
           <div class="device-header">
-            <span class="status-dot online"></span>
-            <span class="device-name">esp32-room1</span>
+            <span class="status-dot" :class="isOnline ? 'online' : 'offline'"></span>
+            <span class="device-name">{{ latest.deviceId || 'Chưa kết nối' }}</span>
           </div>
           <div class="device-info-grid">
             <div class="device-info-item">
@@ -148,7 +219,7 @@
             </div>
             <div class="device-info-item">
               <span class="di-label">Topic</span>
-              <span class="di-value">iot/airquality/room1</span>
+              <span class="di-value">iot/airquality/#</span>
             </div>
             <div class="device-info-item">
               <span class="di-label">Cảm biến</span>
@@ -166,12 +237,48 @@
         </div>
       </div>
 
+      <!-- TAB: Settings -->
+      <div v-if="activeTab === 'settings'" class="tab-content">
+        <div class="settings-card">
+          <h2 class="settings-title">⚙️ Ngưỡng cảnh báo</h2>
+          <p class="settings-desc">Cảnh báo sẽ được tạo tự động khi giá trị vượt ngưỡng.</p>
+
+          <div class="settings-grid">
+            <div class="setting-item">
+              <label>🌡️ Nhiệt độ tối đa (°C)</label>
+              <input type="number" v-model.number="settings.temp_max" min="0" max="100" />
+            </div>
+            <div class="setting-item">
+              <label>💧 Độ ẩm tối thiểu (%)</label>
+              <input type="number" v-model.number="settings.humidity_min" min="0" max="100" />
+            </div>
+            <div class="setting-item">
+              <label>💧 Độ ẩm tối đa (%)</label>
+              <input type="number" v-model.number="settings.humidity_max" min="0" max="100" />
+            </div>
+            <div class="setting-item">
+              <label>💨 CO₂ cảnh báo (ppm)</label>
+              <input type="number" v-model.number="settings.co2_warn" min="0" max="5000" />
+            </div>
+            <div class="setting-item">
+              <label>💨 CO₂ nguy hiểm (ppm)</label>
+              <input type="number" v-model.number="settings.co2_danger" min="0" max="5000" />
+            </div>
+          </div>
+
+          <div class="settings-footer">
+            <button class="btn-save" :class="{ saved: settingsSaved }" @click="saveSettings">
+              {{ settingsSaved ? '✓ Đã lưu!' : '💾 Lưu cài đặt' }}
+            </button>
+          </div>
+        </div>
+      </div>
     </main>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { Line } from 'vue-chartjs'
 import {
@@ -186,63 +293,112 @@ const router = useRouter()
 const activeTab = ref('dashboard')
 const latest = ref({})
 const history = ref([])
-const alerts = ref([])
 const lastUpdate = ref('--')
+
+// Alerts
+const alertsData = ref([])
+const alertFilter = ref('unresolved')
+const alertsLoading = ref(false)
+
+// History
+const histFrom = ref('')
+const histTo = ref('')
+const histData = ref([])
+const histLoading = ref(false)
+
+// Settings
+const settings = ref({ temp_max: 35, humidity_min: 30, humidity_max: 70, co2_warn: 800, co2_danger: 1000 })
+const settingsSaved = ref(false)
 
 const navItems = [
   { id: 'dashboard', icon: '📊', label: 'Dashboard' },
+  { id: 'history',   icon: '📅', label: 'Lịch sử' },
   { id: 'alerts',    icon: '🚨', label: 'Cảnh báo' },
   { id: 'devices',   icon: '📡', label: 'Thiết bị' },
+  { id: 'settings',  icon: '⚙️',  label: 'Cài đặt' },
 ]
 
 const currentPage = computed(() => navItems.find(n => n.id === activeTab.value) || navItems[0])
-const isOnline = computed(() => !!latest.value.timestamp)
+const isOnline     = computed(() => !!latest.value.timestamp)
+const unresolvedCount = computed(() => alertsData.value.filter(a => !a.resolved).length)
+
+const tempStatus = computed(() => {
+  if (!latest.value.temperature) return 'normal'
+  return latest.value.temperature >= settings.value.temp_max ? 'danger' : 'normal'
+})
+const humidityStatus = computed(() => {
+  const h = latest.value.humidity
+  if (!h) return 'normal'
+  return (h < settings.value.humidity_min || h > settings.value.humidity_max) ? 'warning' : 'normal'
+})
+const co2Status = computed(() => {
+  const c = latest.value.co2
+  if (!c) return 'normal'
+  if (c >= settings.value.co2_danger) return 'danger'
+  if (c >= settings.value.co2_warn)   return 'warning'
+  return 'normal'
+})
 
 const tempPct = computed(() => Math.min(((latest.value.temperature ?? 0) / 50) * 100, 100))
 const co2Pct  = computed(() => Math.min(((latest.value.co2 ?? 0) / 2000) * 100, 100))
 
 const airQualityClass = computed(() => {
-  if (!latest.value.co2) return 'aqi-good'
-  if (latest.value.co2 > 1000) return 'aqi-danger'
-  if (latest.value.co2 > 800)  return 'aqi-warn'
+  if (co2Status.value === 'danger' || tempStatus.value === 'danger') return 'aqi-danger'
+  if (co2Status.value === 'warning' || humidityStatus.value === 'warning') return 'aqi-warn'
   return 'aqi-good'
 })
-
 const airQualityLabel = computed(() => {
   if (!latest.value.co2) return '— Chưa có dữ liệu'
-  if (latest.value.co2 > 1000) return '🔴 Không khí nguy hiểm'
-  if (latest.value.co2 > 800)  return '🟡 Không khí kém'
+  if (airQualityClass.value === 'aqi-danger') return '🔴 Không khí nguy hiểm'
+  if (airQualityClass.value === 'aqi-warn')   return '🟡 Không khí kém'
   return '🟢 Không khí tốt'
 })
 
-const formatTime = (ts) => ts ? new Date(ts).toLocaleTimeString('vi-VN') : '--'
+const formatTime     = (ts) => ts ? new Date(ts).toLocaleTimeString('vi-VN') : '--'
+const formatDateTime = (ts) => ts ? new Date(ts).toLocaleString('vi-VN') : '--'
+const alertTypeIcon  = (type) => ({ co2: '💨', temperature: '🌡️', humidity: '💧' }[type] || '⚠️')
 
-const chartData = computed(() => ({
+const buildDatasets = (source) => ([
+  {
+    label: 'Nhiệt độ (°C)',
+    data: source.map(d => d.temperature),
+    borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)',
+    tension: 0.4, pointRadius: 2, borderWidth: 2,
+  },
+  {
+    label: 'Độ ẩm (%)',
+    data: source.map(d => d.humidity),
+    borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.08)',
+    tension: 0.4, pointRadius: 2, borderWidth: 2,
+  },
+  {
+    label: 'CO₂ (÷10)',
+    data: source.map(d => +(d.co2 / 10).toFixed(1)),
+    borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.08)',
+    tension: 0.4, pointRadius: 2, borderWidth: 2,
+  },
+])
+
+const liveChartData = computed(() => ({
   labels: history.value.map(d => formatTime(d.timestamp)),
-  datasets: [
-    {
-      label: 'Nhiệt độ (°C)',
-      data: history.value.map(d => d.temperature),
-      borderColor: '#ef4444',
-      backgroundColor: 'rgba(239,68,68,0.08)',
-      tension: 0.4, pointRadius: 2, borderWidth: 2,
-    },
-    {
-      label: 'Độ ẩm (%)',
-      data: history.value.map(d => d.humidity),
-      borderColor: '#3b82f6',
-      backgroundColor: 'rgba(59,130,246,0.08)',
-      tension: 0.4, pointRadius: 2, borderWidth: 2,
-    },
-    {
-      label: 'CO₂ (÷10)',
-      data: history.value.map(d => +(d.co2 / 10).toFixed(1)),
-      borderColor: '#10b981',
-      backgroundColor: 'rgba(16,185,129,0.08)',
-      tension: 0.4, pointRadius: 2, borderWidth: 2,
-    },
-  ]
+  datasets: buildDatasets(history.value),
 }))
+
+const histChartData = computed(() => ({
+  labels: histData.value.map(d => formatDateTime(d.timestamp)),
+  datasets: buildDatasets(histData.value),
+}))
+
+const histStats = computed(() => {
+  if (!histData.value.length) return {}
+  const temps = histData.value.map(d => d.temperature)
+  const co2s  = histData.value.map(d => d.co2)
+  return {
+    tempMin: Math.min(...temps).toFixed(1),
+    tempMax: Math.max(...temps).toFixed(1),
+    co2Max:  Math.max(...co2s),
+  }
+})
 
 const chartOptions = {
   responsive: true,
@@ -256,29 +412,121 @@ const chartOptions = {
   }
 }
 
-const fetchData = async () => {
+// ── API calls ──────────────────────────────────────────
+
+const fetchLive = async () => {
   try {
     const [latestRes, histRes] = await Promise.all([
       api.get('/sensor/latest'),
-      api.get('/sensor/data')
+      api.get('/sensor/data'),
     ])
     latest.value  = latestRes.data || {}
     history.value = (histRes.data || []).reverse().slice(-50)
     lastUpdate.value = formatTime(new Date())
-
-    if (latest.value.co2 > 1000) {
-      const msg = `[${formatTime(latest.value.timestamp)}] CO₂ = ${latest.value.co2}ppm — Nguy hiểm!`
-      if (!alerts.value.includes(msg)) alerts.value.unshift(msg)
-    }
   } catch (err) {
     console.error(err)
   }
 }
 
+const fetchAlerts = async () => {
+  alertsLoading.value = true
+  try {
+    const params = alertFilter.value === 'unresolved' ? { resolved: false } : {}
+    const res = await api.get('/alerts', { params })
+    alertsData.value = res.data
+  } catch (err) {
+    console.error(err)
+  } finally {
+    alertsLoading.value = false
+  }
+}
+
+const setAlertFilter = (f) => { alertFilter.value = f }
+watch(alertFilter, fetchAlerts)
+
+const resolveAlert = async (id) => {
+  try {
+    await api.patch(`/alerts/${id}/resolve`)
+    if (alertFilter.value === 'unresolved') {
+      alertsData.value = alertsData.value.filter(a => a._id !== id)
+    } else {
+      const idx = alertsData.value.findIndex(a => a._id === id)
+      if (idx !== -1) alertsData.value[idx] = { ...alertsData.value[idx], resolved: true }
+    }
+  } catch (err) { console.error(err) }
+}
+
+const deleteAlert = async (id) => {
+  try {
+    await api.delete(`/alerts/${id}`)
+    alertsData.value = alertsData.value.filter(a => a._id !== id)
+  } catch (err) { console.error(err) }
+}
+
+const fetchHistory = async () => {
+  histLoading.value = true
+  try {
+    const params = {}
+    if (histFrom.value) params.from = histFrom.value
+    if (histTo.value)   params.to   = histTo.value
+    const res = await api.get('/sensor/history', { params })
+    histData.value = res.data
+  } catch (err) {
+    console.error(err)
+  } finally {
+    histLoading.value = false
+  }
+}
+
+const exportCSV = async () => {
+  try {
+    const params = {}
+    if (histFrom.value) params.from = histFrom.value
+    if (histTo.value)   params.to   = histTo.value
+    const res = await api.get('/sensor/export', { params, responseType: 'blob' })
+    const url = URL.createObjectURL(new Blob([res.data], { type: 'text/csv;charset=utf-8' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'sensor_data.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (err) { console.error(err) }
+}
+
+const fetchSettings = async () => {
+  try {
+    const res = await api.get('/settings')
+    if (res.data.thresholds) Object.assign(settings.value, res.data.thresholds)
+  } catch (err) { console.error(err) }
+}
+
+const saveSettings = async () => {
+  try {
+    await api.put('/settings', settings.value)
+    settingsSaved.value = true
+    setTimeout(() => settingsSaved.value = false, 2000)
+  } catch (err) { console.error(err) }
+}
+
+// Fetch khi chuyển tab
+watch(activeTab, (tab) => {
+  if (tab === 'alerts')  fetchAlerts()
+  if (tab === 'history') fetchHistory()
+})
+
 const logout = () => { localStorage.removeItem('token'); router.push('/login') }
 
 let interval
-onMounted(() => { fetchData(); interval = setInterval(fetchData, 5000) })
+onMounted(async () => {
+  // Set default dates cho history tab (24h gần nhất)
+  const now = new Date()
+  histTo.value   = now.toISOString().slice(0, 16)
+  const yesterday = new Date(now - 24 * 60 * 60 * 1000)
+  histFrom.value = yesterday.toISOString().slice(0, 16)
+
+  await Promise.all([fetchLive(), fetchSettings(), fetchAlerts()])
+  interval = setInterval(fetchLive, 5000)
+})
 onUnmounted(() => clearInterval(interval))
 </script>
 
@@ -301,9 +549,7 @@ onUnmounted(() => clearInterval(interval))
   background: #0f172a;
   display: flex;
   flex-direction: column;
-  padding: 0;
 }
-
 .brand {
   display: flex;
   align-items: center;
@@ -312,7 +558,7 @@ onUnmounted(() => clearInterval(interval))
   border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 .brand-icon { font-size: 22px; }
-.brand-name { color: white; font-weight: 700; font-size: 16px; letter-spacing: -0.3px; }
+.brand-name { color: white; font-weight: 700; font-size: 16px; }
 
 .nav { flex: 1; padding: 12px 8px; display: flex; flex-direction: column; gap: 4px; }
 .nav-item {
@@ -322,14 +568,25 @@ onUnmounted(() => clearInterval(interval))
   padding: 9px 12px;
   border-radius: 8px;
   cursor: pointer;
-  transition: background 0.15s;
   color: rgba(255,255,255,0.5);
   font-size: 13px;
+  transition: background 0.15s;
+  position: relative;
 }
-.nav-item:hover { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.8); }
+.nav-item:hover  { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.8); }
 .nav-item.active { background: #1e40af; color: white; }
-.nav-icon { font-size: 15px; }
-.nav-label { font-weight: 500; }
+.nav-icon  { font-size: 15px; }
+.nav-label { font-weight: 500; flex: 1; }
+.nav-badge {
+  background: #ef4444;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  min-width: 18px;
+  text-align: center;
+}
 
 .sidebar-footer {
   padding: 12px 8px;
@@ -342,8 +599,7 @@ onUnmounted(() => clearInterval(interval))
 .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .status-dot.online  { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
 .status-dot.offline { background: #ef4444; }
-.status-text { color: rgba(255,255,255,0.5); font-size: 11px; }
-
+.status-text { color: rgba(255,255,255,0.5); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .logout-btn {
   margin: 0 4px;
   padding: 8px 12px;
@@ -358,13 +614,7 @@ onUnmounted(() => clearInterval(interval))
 .logout-btn:hover { background: rgba(239,68,68,0.22); }
 
 /* ── Main ── */
-.main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  min-width: 0;
-}
+.main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
 
 .topbar {
   display: flex;
@@ -375,15 +625,9 @@ onUnmounted(() => clearInterval(interval))
   border-bottom: 1px solid #e2e8f0;
   flex-shrink: 0;
 }
-.page-title { font-size: 16px; font-weight: 700; color: #0f172a; }
+.page-title  { font-size: 16px; font-weight: 700; color: #0f172a; }
 .last-update { font-size: 11px; color: #94a3b8; margin-left: 10px; }
-
-.air-index {
-  padding: 5px 14px;
-  border-radius: 20px;
-  font-size: 12px;
-  font-weight: 600;
-}
+.air-index { padding: 5px 14px; border-radius: 20px; font-size: 12px; font-weight: 600; }
 .aqi-good   { background: #dcfce7; color: #15803d; }
 .aqi-warn   { background: #fef9c3; color: #a16207; }
 .aqi-danger { background: #fee2e2; color: #b91c1c; }
@@ -391,13 +635,12 @@ onUnmounted(() => clearInterval(interval))
 /* ── Tab content ── */
 .tab-content {
   flex: 1;
-  overflow: hidden;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   padding: 16px 20px;
   gap: 14px;
   min-height: 0;
-  max-height: calc(100vh - 60px);
 }
 
 /* ── Metrics ── */
@@ -407,7 +650,6 @@ onUnmounted(() => clearInterval(interval))
   gap: 12px;
   flex-shrink: 0;
 }
-
 .metric-card {
   background: white;
   border-radius: 12px;
@@ -418,23 +660,19 @@ onUnmounted(() => clearInterval(interval))
 .metric-card.danger  { border-left-color: #ef4444; }
 .metric-card.warning { border-left-color: #f59e0b; }
 .metric-card.info    { border-left-color: #8b5cf6; }
-
 .metric-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 .metric-label { font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
-.metric-icon { font-size: 18px; }
-
+.metric-icon  { font-size: 18px; }
 .metric-value { font-size: 28px; font-weight: 800; color: #0f172a; line-height: 1; margin-bottom: 8px; }
 .metric-value.device-id { font-size: 14px; font-weight: 600; padding-top: 6px; }
-.metric-unit { font-size: 13px; font-weight: 500; color: #94a3b8; margin-left: 2px; }
-
-.metric-bar { height: 4px; background: #f1f5f9; border-radius: 2px; overflow: hidden; margin-bottom: 6px; }
-.metric-fill { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
+.metric-unit  { font-size: 13px; font-weight: 500; color: #94a3b8; margin-left: 2px; }
+.metric-bar   { height: 4px; background: #f1f5f9; border-radius: 2px; overflow: hidden; margin-bottom: 6px; }
+.metric-fill  { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
 .metric-fill.temp      { background: #ef4444; }
 .metric-fill.hum       { background: #3b82f6; }
 .metric-fill.co2       { background: #10b981; }
 .metric-fill.info-fill { background: #8b5cf6; }
-
-.metric-hint { font-size: 11px; font-weight: 500; }
+.metric-hint      { font-size: 11px; font-weight: 500; }
 .metric-hint.ok   { color: #22c55e; }
 .metric-hint.warn { color: #f59e0b; }
 
@@ -443,25 +681,168 @@ onUnmounted(() => clearInterval(interval))
   background: white;
   border-radius: 12px;
   padding: 14px 16px;
-  height: 550px;
-  max-height: 550px;
+  height: 300px;
   display: flex;
   flex-direction: column;
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  flex-shrink: 0;
 }
+.chart-card.chart-grow { flex: 1; height: auto; min-height: 280px; }
 .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-shrink: 0; }
-.chart-title { font-size: 13px; font-weight: 600; color: #0f172a; }
-.chart-count { font-size: 11px; color: #94a3b8; }
-.chart-wrap { flex: 1; min-height: 0; position: relative; }
+.chart-title  { font-size: 13px; font-weight: 600; color: #0f172a; }
+.chart-count  { font-size: 11px; color: #94a3b8; }
+.chart-wrap   { flex: 1; min-height: 0; position: relative; }
 .no-data { display: flex; align-items: center; justify-content: center; height: 100%; color: #94a3b8; font-size: 13px; }
 
+/* ── History tab ── */
+.history-tab { overflow-y: auto; }
+.hist-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: white;
+  padding: 14px 16px;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  flex-shrink: 0;
+}
+.date-range { display: flex; gap: 12px; flex-wrap: wrap; flex: 1; }
+.date-input { display: flex; flex-direction: column; gap: 4px; }
+.date-input label { font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; }
+.date-input input {
+  padding: 7px 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #0f172a;
+  outline: none;
+}
+.date-input input:focus { border-color: #3b82f6; }
+.hist-actions { display: flex; gap: 8px; align-items: flex-end; }
+.hist-stats { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+.stat-chip {
+  background: white;
+  border: 1px solid #e2e8f0;
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  color: #374151;
+  font-weight: 500;
+}
+
+/* ── Buttons ── */
+.btn-primary {
+  padding: 8px 16px;
+  background: #1e40af;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-export {
+  padding: 8px 16px;
+  background: #059669;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-export:hover:not(:disabled) { background: #047857; }
+.btn-export:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-ghost {
+  padding: 7px 14px;
+  background: transparent;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-ghost:hover { background: #f8fafc; }
+
 /* ── Alerts ── */
-.alerts-wrap { display: flex; flex-direction: column; gap: 8px; }
+.alerts-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.filter-tabs { display: flex; gap: 4px; }
+.filter-btn {
+  padding: 7px 14px;
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #64748b;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.filter-btn.active { background: #1e40af; color: white; border-color: #1e40af; }
+.badge {
+  background: #ef4444;
+  color: white;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
 .empty-state { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 40px; color: #94a3b8; font-size: 13px; }
 .empty-state span { font-size: 32px; }
-.alert-row { display: flex; align-items: center; gap: 10px; background: white; padding: 12px 16px; border-radius: 10px; border-left: 3px solid #f59e0b; }
-.alert-badge { font-size: 16px; }
-.alert-msg { font-size: 13px; color: #374151; }
+.alerts-list { display: flex; flex-direction: column; gap: 8px; }
+.alert-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: white;
+  padding: 12px 16px;
+  border-radius: 10px;
+  border-left: 3px solid #f59e0b;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+  transition: opacity 0.2s;
+}
+.alert-row.alert-co2         { border-left-color: #10b981; }
+.alert-row.alert-temperature { border-left-color: #ef4444; }
+.alert-row.alert-humidity    { border-left-color: #3b82f6; }
+.alert-row.resolved          { opacity: 0.45; }
+.alert-icon  { font-size: 20px; flex-shrink: 0; }
+.alert-body  { flex: 1; min-width: 0; }
+.alert-msg   { font-size: 13px; color: #374151; font-weight: 500; }
+.alert-meta  { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+.alert-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.btn-resolve {
+  padding: 5px 12px;
+  background: #dcfce7;
+  color: #15803d;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-resolve:hover { background: #bbf7d0; }
+.btn-del {
+  padding: 5px 8px;
+  background: #fee2e2;
+  color: #b91c1c;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn-del:hover { background: #fecaca; }
 
 /* ── Devices ── */
 .device-card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); max-width: 500px; }
@@ -471,4 +852,62 @@ onUnmounted(() => clearInterval(interval))
 .device-info-item { display: flex; flex-direction: column; gap: 3px; }
 .di-label { font-size: 10px; font-weight: 600; color: #94a3b8; text-transform: uppercase; }
 .di-value { font-size: 13px; font-weight: 500; color: #0f172a; }
+
+/* ── Settings ── */
+.settings-card {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  max-width: 560px;
+}
+.settings-title { font-size: 16px; font-weight: 700; color: #0f172a; margin-bottom: 4px; }
+.settings-desc  { font-size: 13px; color: #64748b; margin-bottom: 20px; }
+.settings-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.setting-item   { display: flex; flex-direction: column; gap: 6px; }
+.setting-item label { font-size: 12px; font-weight: 600; color: #374151; }
+.setting-item input {
+  padding: 8px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #0f172a;
+  outline: none;
+  width: 100%;
+}
+.setting-item input:focus { border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+.settings-footer { margin-top: 24px; }
+.btn-save {
+  padding: 10px 24px;
+  background: #1e40af;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.btn-save:hover { background: #1d4ed8; }
+.btn-save.saved { background: #059669; }
+
+/* ── Mobile responsive ── */
+@media (max-width: 768px) {
+  .sidebar { width: 56px; min-width: 56px; }
+  .brand-name, .nav-label, .sidebar-footer .status-text { display: none; }
+  .nav-item { justify-content: center; padding: 10px; }
+  .nav-badge { position: absolute; top: 4px; right: 4px; }
+  .logout-btn { font-size: 0; padding: 8px; text-align: center; }
+  .logout-btn::before { content: '⎋'; font-size: 14px; }
+  .metrics { grid-template-columns: 1fr 1fr; }
+  .topbar { padding: 10px 14px; }
+  .tab-content { padding: 10px 12px; }
+}
+
+@media (max-width: 480px) {
+  .metrics { grid-template-columns: 1fr; }
+  .settings-grid { grid-template-columns: 1fr; }
+  .hist-toolbar { flex-direction: column; align-items: stretch; }
+  .hist-actions { flex-direction: row; }
+}
 </style>
