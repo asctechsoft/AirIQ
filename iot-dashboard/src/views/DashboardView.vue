@@ -137,6 +137,16 @@
             </div>
           </div>
         </div>
+
+        <div class="chart-card weekly-card">
+          <div class="chart-header">
+            <span class="chart-title-sm">📅 Cảnh báo theo ngày (7 ngày qua)</span>
+          </div>
+          <div class="chart-wrap">
+            <Bar v-if="weeklyAlertData.labels.length" :data="weeklyAlertData" :options="weeklyAlertOptions" />
+            <div v-else class="no-data">Đang tải...</div>
+          </div>
+        </div>
       </div>
 
       <!-- TAB: History -->
@@ -162,20 +172,47 @@
           </div>
         </div>
 
+        <p v-if="histError" class="hist-error">⚠ {{ histError }}</p>
+
         <div v-if="histData.length > 0" class="hist-stats">
           <span class="stat-chip">{{ histData.length }} bản ghi</span>
-          <span class="stat-chip">🌡️ Min {{ histStats.tempMin }}°C · Max {{ histStats.tempMax }}°C</span>
-          <span class="stat-chip">💨 CO₂ Max {{ histStats.co2Max }}ppm</span>
         </div>
 
-        <div class="chart-card chart-grow">
-          <div class="chart-header">
-            <span class="chart-title">📅 Dữ liệu lịch sử</span>
+        <div v-if="histLoading" class="chart-card chart-grow">
+          <div class="no-data">Đang tải...</div>
+        </div>
+        <div v-else-if="histData.length === 0" class="chart-card chart-grow">
+          <div class="no-data">Chọn khoảng thời gian và nhấn Tìm kiếm</div>
+        </div>
+        <div v-else class="mini-charts hist-mini-charts">
+          <div class="chart-card mini hist-mini">
+            <div class="chart-header"><span class="chart-title-sm">🌡️ Nhiệt độ (°C)</span></div>
+            <div class="chart-wrap">
+              <Line :data="histTempChartData" :options="miniChartOptions" />
+            </div>
+            <div v-if="histTempStats" class="mini-stats">
+              Min {{ histTempStats.min }} · Max {{ histTempStats.max }} · TB {{ histTempStats.avg }}
+            </div>
           </div>
-          <div class="chart-wrap">
-            <Line v-if="histChartData.labels.length" :data="histChartData" :options="chartOptions" />
-            <div v-else-if="histLoading" class="no-data">Đang tải...</div>
-            <div v-else class="no-data">Chọn khoảng thời gian và nhấn Tìm kiếm</div>
+
+          <div class="chart-card mini hist-mini">
+            <div class="chart-header"><span class="chart-title-sm">💧 Độ ẩm (%)</span></div>
+            <div class="chart-wrap">
+              <Line :data="histHumidityChartData" :options="miniChartOptions" />
+            </div>
+            <div v-if="histHumidityStats" class="mini-stats">
+              Min {{ histHumidityStats.min }} · Max {{ histHumidityStats.max }} · TB {{ histHumidityStats.avg }}
+            </div>
+          </div>
+
+          <div class="chart-card mini hist-mini">
+            <div class="chart-header"><span class="chart-title-sm">💨 CO₂ (ppm)</span></div>
+            <div class="chart-wrap">
+              <Line :data="histCo2ChartData" :options="miniChartOptions" />
+            </div>
+            <div v-if="histCo2Stats" class="mini-stats">
+              Min {{ histCo2Stats.min }} · Max {{ histCo2Stats.max }} · TB {{ histCo2Stats.avg }}
+            </div>
           </div>
         </div>
       </div>
@@ -214,7 +251,12 @@
               @click="setAlertFilter('all')"
             >Tất cả</button>
           </div>
-          <button class="btn-ghost" @click="fetchAlerts(); fetchAlertStats()">🔄 Làm mới</button>
+          <div class="toolbar-actions">
+            <button class="btn-ghost" @click="fetchAlerts(); fetchAlertStats()">🔄 Làm mới</button>
+            <button class="btn-ghost btn-danger" @click="deleteAllAlerts" :disabled="alertsData.length === 0">
+              🗑 Xóa tất cả
+            </button>
+          </div>
         </div>
 
         <div v-if="alertsLoading" class="empty-state"><p>Đang tải...</p></div>
@@ -335,6 +377,7 @@ const activeTab = ref('dashboard')
 const latest = ref({})
 const history = ref([])
 const lastUpdate = ref('--')
+const weeklyAlerts = ref([])
 
 // Alerts
 const alertsData = ref([])
@@ -347,6 +390,7 @@ const histFrom = ref('')
 const histTo = ref('')
 const histData = ref([])
 const histLoading = ref(false)
+const histError = ref('')
 
 // Settings
 const settings = ref({ temp_max: 35, humidity_min: 30, humidity_max: 70, co2_warn: 800, co2_danger: 1000 })
@@ -362,7 +406,9 @@ const navItems = [
 
 const currentPage = computed(() => navItems.find(n => n.id === activeTab.value) || navItems[0])
 const isOnline     = computed(() => !!latest.value.timestamp)
-const unresolvedCount = computed(() => alertsData.value.filter(a => !a.resolved).length)
+// Lấy từ /alerts/stats (poll cùng nhịp fetchLive) thay vì đếm trên alertsData —
+// alertsData chỉ mới khi đang mở tab Cảnh báo, còn badge sidebar cần luôn mới.
+const unresolvedCount = computed(() => alertStats.value.unresolved)
 
 const tempStatus = computed(() => {
   if (!latest.value.temperature) return 'normal'
@@ -423,30 +469,20 @@ const formatTime     = (ts) => ts ? new Date(ts).toLocaleTimeString('vi-VN') : '
 const formatDateTime = (ts) => ts ? new Date(ts).toLocaleString('vi-VN') : '--'
 const alertTypeIcon  = (type) => ({ co2: '💨', temperature: '🌡️', humidity: '💧' }[type] || '⚠️')
 
-const buildDatasets = (source) => ([
-  {
-    label: 'Nhiệt độ (°C)',
-    data: source.map(d => d.temperature),
-    borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)',
-    tension: 0.4, pointRadius: 2, borderWidth: 2,
-  },
-  {
-    label: 'Độ ẩm (%)',
-    data: source.map(d => d.humidity),
-    borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.08)',
-    tension: 0.4, pointRadius: 2, borderWidth: 2,
-  },
-  {
-    label: 'CO₂ (÷10)',
-    data: source.map(d => +(d.co2 / 10).toFixed(1)),
-    borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.08)',
-    tension: 0.4, pointRadius: 2, borderWidth: 2,
-  },
-])
+// toISOString() trả về giờ UTC — gán thẳng vào <input type="datetime-local">
+// sẽ bị lệch theo múi giờ của trình duyệt vì input đó hiểu chuỗi là giờ địa
+// phương. Format thủ công theo giờ local để mặc định "24h gần nhất" đúng thật.
+const toLocalInputValue = (date) => {
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    `T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
 
-// ── Dashboard: 3 mini chart riêng (mỗi đại lượng 1 trục) ──
+// ── Mini chart riêng cho từng đại lượng (mỗi đại lượng 1 trục) ──
 // Gộp chung 1 trục sẽ làm nhiệt độ/độ ẩm trông phẳng lì cạnh CO2 (khác đơn vị,
 // khác biên độ) nên tách nhỏ mỗi cái 1 chart, tự scale theo dữ liệu của nó.
+// Dùng chung cho cả Dashboard (history, 20 điểm gần nhất) và Lịch sử (histData,
+// khoảng thời gian tùy chọn).
 const miniChartOptions = {
   responsive: true,
   maintainAspectRatio: false,
@@ -457,18 +493,22 @@ const miniChartOptions = {
   },
 }
 
-const buildMiniChart = (key, color, bg) => computed(() => ({
-  labels: history.value.map(d => formatTime(d.timestamp)),
+const buildMiniChart = (source, key, color, bg, labelFn = formatTime) => computed(() => ({
+  labels: source.value.map(d => labelFn(d.timestamp)),
   datasets: [{
-    data: history.value.map(d => d[key]),
+    data: source.value.map(d => d[key]),
     borderColor: color, backgroundColor: bg,
     fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2,
   }],
 }))
 
-const tempChartData     = buildMiniChart('temperature', '#ef4444', 'rgba(239,68,68,0.10)')
-const humidityChartData = buildMiniChart('humidity', '#3b82f6', 'rgba(59,130,246,0.10)')
-const co2ChartData      = buildMiniChart('co2', '#10b981', 'rgba(16,185,129,0.10)')
+const tempChartData     = buildMiniChart(history, 'temperature', '#ef4444', 'rgba(239,68,68,0.10)')
+const humidityChartData = buildMiniChart(history, 'humidity', '#3b82f6', 'rgba(59,130,246,0.10)')
+const co2ChartData      = buildMiniChart(history, 'co2', '#10b981', 'rgba(16,185,129,0.10)')
+
+const histTempChartData     = buildMiniChart(histData, 'temperature', '#ef4444', 'rgba(239,68,68,0.10)', formatDateTime)
+const histHumidityChartData = buildMiniChart(histData, 'humidity', '#3b82f6', 'rgba(59,130,246,0.10)', formatDateTime)
+const histCo2ChartData      = buildMiniChart(histData, 'co2', '#10b981', 'rgba(16,185,129,0.10)', formatDateTime)
 
 const computeWindowStats = (values, digits = 1) => {
   const valid = values.filter(v => v != null && !Number.isNaN(v))
@@ -483,33 +523,9 @@ const tempWindowStats     = computed(() => computeWindowStats(history.value.map(
 const humidityWindowStats = computed(() => computeWindowStats(history.value.map(d => d.humidity)))
 const co2WindowStats      = computed(() => computeWindowStats(history.value.map(d => d.co2), 0))
 
-const histChartData = computed(() => ({
-  labels: histData.value.map(d => formatDateTime(d.timestamp)),
-  datasets: buildDatasets(histData.value),
-}))
-
-const histStats = computed(() => {
-  if (!histData.value.length) return {}
-  const temps = histData.value.map(d => d.temperature)
-  const co2s  = histData.value.map(d => d.co2)
-  return {
-    tempMin: Math.min(...temps).toFixed(1),
-    tempMax: Math.max(...temps).toFixed(1),
-    co2Max:  Math.max(...co2s),
-  }
-})
-
-const chartOptions = {
-  responsive: true,
-  maintainAspectRatio: false,
-  plugins: {
-    legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } }
-  },
-  scales: {
-    x: { ticks: { maxTicksLimit: 10, font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.04)' } },
-    y: { ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.04)' } }
-  }
-}
+const histTempStats     = computed(() => computeWindowStats(histData.value.map(d => d.temperature)))
+const histHumidityStats = computed(() => computeWindowStats(histData.value.map(d => d.humidity)))
+const histCo2Stats      = computed(() => computeWindowStats(histData.value.map(d => d.co2), 0))
 
 // ── Cảnh báo theo loại — dùng đúng màu identity đã dùng ở list cảnh báo ──
 const ALERT_TYPE_COLORS = { co2: '#10b981', temperature: '#ef4444', humidity: '#3b82f6' }
@@ -536,6 +552,29 @@ const alertTypeChartOptions = {
   },
 }
 
+// ── Cảnh báo theo ngày trong tuần — cột xếp chồng theo loại ──
+const weeklyAlertData = computed(() => ({
+  labels: weeklyAlerts.value.map(d => new Date(d.date).toLocaleDateString('vi-VN', { weekday: 'short' })),
+  datasets: ALERT_TYPES.map(t => ({
+    label: ALERT_TYPE_LABELS[t],
+    data: weeklyAlerts.value.map(d => d[t] || 0),
+    backgroundColor: ALERT_TYPE_COLORS[t],
+    stack: 'alerts',
+    borderRadius: 4,
+  })),
+}))
+const weeklyAlertOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: { position: 'top', labels: { boxWidth: 12, font: { size: 11 } } },
+  },
+  scales: {
+    x: { stacked: true, ticks: { font: { size: 11 } }, grid: { display: false } },
+    y: { stacked: true, beginAtZero: true, ticks: { precision: 0, font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.04)' } },
+  },
+}
+
 // ── API calls ──────────────────────────────────────────
 
 const fetchLive = async () => {
@@ -550,6 +589,13 @@ const fetchLive = async () => {
   } catch (err) {
     console.error(err)
   }
+}
+
+const fetchWeeklyAlerts = async () => {
+  try {
+    const res = await api.get('/alerts/weekly')
+    weeklyAlerts.value = res.data
+  } catch (err) { console.error(err) }
 }
 
 const fetchAlerts = async () => {
@@ -593,10 +639,30 @@ const deleteAlert = async (id) => {
     await api.delete(`/alerts/${id}`)
     alertsData.value = alertsData.value.filter(a => a._id !== id)
     fetchAlertStats()
+    fetchWeeklyAlerts()
+  } catch (err) { console.error(err) }
+}
+
+const deleteAllAlerts = async () => {
+  const scope = alertFilter.value === 'unresolved' ? 'chưa xử lý' : 'tất cả'
+  if (!confirm(`Xóa ${scope} cảnh báo (${alertsData.value.length})? Không thể hoàn tác.`)) return
+  try {
+    const params = alertFilter.value === 'unresolved' ? { resolved: false } : {}
+    await api.delete('/alerts', { params })
+    alertsData.value = []
+    fetchAlertStats()
+    fetchWeeklyAlerts()
   } catch (err) { console.error(err) }
 }
 
 const fetchHistory = async () => {
+  histError.value = ''
+  if (histFrom.value && histTo.value && new Date(histFrom.value) > new Date(histTo.value)) {
+    histError.value = '"Từ ngày" đang đứng sau "Đến ngày" — đổi lại thứ tự thì mới tìm ra dữ liệu.'
+    histData.value = []
+    return
+  }
+
   histLoading.value = true
   try {
     const params = {}
@@ -612,6 +678,10 @@ const fetchHistory = async () => {
 }
 
 const exportCSV = async () => {
+  if (histFrom.value && histTo.value && new Date(histFrom.value) > new Date(histTo.value)) {
+    histError.value = '"Từ ngày" đang đứng sau "Đến ngày" — đổi lại thứ tự thì mới xuất được.'
+    return
+  }
   try {
     const params = {}
     if (histFrom.value) params.from = histFrom.value
@@ -670,24 +740,36 @@ const resetIdleTimer = () => {
   idleTimer = setTimeout(handleIdleTimeout, IDLE_LIMIT_MS)
 }
 
+// Trình duyệt tự làm chậm setInterval khi tab bị đẩy xuống nền (vd. đang xem
+// tab Wokwi) — nên khi quay lại tab này, fetch ngay lập tức thay vì đợi vòng
+// poll 5s tiếp theo (có khi bị hoãn tới cả phút).
+const handleVisibilityChange = () => {
+  if (document.visibilityState === 'visible') {
+    fetchLive()
+    if (activeTab.value === 'alerts') { fetchAlerts(); fetchAlertStats() }
+  }
+}
+
 let interval
 onMounted(async () => {
-  // Set default dates cho history tab (24h gần nhất)
+  // Set default dates cho history tab (24h gần nhất, theo giờ địa phương)
   const now = new Date()
-  histTo.value   = now.toISOString().slice(0, 16)
+  histTo.value   = toLocalInputValue(now)
   const yesterday = new Date(now - 24 * 60 * 60 * 1000)
-  histFrom.value = yesterday.toISOString().slice(0, 16)
+  histFrom.value = toLocalInputValue(yesterday)
 
-  await Promise.all([fetchLive(), fetchSettings(), fetchAlerts()])
-  interval = setInterval(fetchLive, 5000)
+  await Promise.all([fetchLive(), fetchSettings(), fetchAlerts(), fetchAlertStats(), fetchWeeklyAlerts()])
+  interval = setInterval(() => { fetchLive(); fetchAlertStats() }, 5000)
 
   resetIdleTimer()
   ACTIVITY_EVENTS.forEach(evt => window.addEventListener(evt, resetIdleTimer))
+  document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 onUnmounted(() => {
   clearInterval(interval)
   clearTimeout(idleTimer)
   ACTIVITY_EVENTS.forEach(evt => window.removeEventListener(evt, resetIdleTimer))
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 </script>
 
@@ -878,6 +960,9 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 .chart-card.mini { height: 220px; padding: 12px 14px; }
+.chart-card.weekly-card { height: 260px; flex-shrink: 0; }
+.hist-mini-charts { flex-shrink: 0; }
+.chart-card.hist-mini { height: 320px; }
 .chart-title-sm { font-size: 12px; font-weight: 600; color: #0f172a; }
 .mini-stats {
   font-size: 10px;
@@ -914,6 +999,7 @@ onUnmounted(() => {
 .date-input input:focus { border-color: #3b82f6; }
 .hist-actions { display: flex; gap: 8px; align-items: flex-end; }
 .hist-stats { display: flex; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+.hist-error { font-size: 12px; font-weight: 500; color: #d03b3b; flex-shrink: 0; }
 .stat-chip {
   background: white;
   border: 1px solid #e2e8f0;
@@ -959,6 +1045,9 @@ onUnmounted(() => {
   cursor: pointer;
 }
 .btn-ghost:hover { background: #f8fafc; }
+.btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-ghost.btn-danger { color: #d03b3b; border-color: #fecaca; }
+.btn-ghost.btn-danger:hover:not(:disabled) { background: #fef2f2; }
 
 /* ── Alerts ── */
 .alert-stats-row {
@@ -993,6 +1082,7 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 .filter-tabs { display: flex; gap: 4px; }
+.toolbar-actions { display: flex; gap: 8px; }
 .filter-btn {
   padding: 7px 14px;
   background: white;

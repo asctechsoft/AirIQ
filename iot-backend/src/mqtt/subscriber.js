@@ -44,14 +44,26 @@ const connectMQTT = () => {
   client.on('reconnect', () => console.log('MQTT reconnecting...'));
 };
 
+// Không tạo lại cảnh báo cùng loại cho cùng thiết bị nếu vừa mới có một cái
+// trong khoảng cooldown — tránh spam hàng chục cảnh báo giống hệt nhau khi
+// giá trị đứng yên ở mức vượt ngưỡng qua nhiều chu kỳ đọc liên tiếp.
+const ALERT_COOLDOWN_MS = 5 * 60 * 1000;
+
 async function checkThresholds(data) {
   try {
     let s = await Settings.findOne();
     if (!s) s = await Settings.create({});
     const th = s.thresholds;
 
-    const makeAlert = (type, value, threshold, message) =>
-      Alert.create({ deviceId: data.deviceId, type, value, threshold, message });
+    const makeAlert = async (type, value, threshold, message) => {
+      const recent = await Alert.findOne({
+        deviceId: data.deviceId,
+        type,
+        createdAt: { $gte: new Date(Date.now() - ALERT_COOLDOWN_MS) },
+      });
+      if (recent) return;
+      await Alert.create({ deviceId: data.deviceId, type, value, threshold, message });
+    };
 
     if (data.co2 >= th.co2_danger) {
       await makeAlert('co2', data.co2, th.co2_danger,

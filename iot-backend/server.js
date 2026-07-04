@@ -10,6 +10,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Dữ liệu cảm biến/cảnh báo thay đổi liên tục — chặn browser/proxy cache lại
+// response cũ, tránh dashboard polling nhận mãi 1 bản ghi cũ.
+app.use('/api/', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
+
 // Rate limit riêng cho auth (chống brute-force login/register/refresh) — số request thấp vì
 // đây là các hành động không lặp lại liên tục.
 app.use('/api/auth', rateLimit({

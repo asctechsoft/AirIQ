@@ -129,6 +129,7 @@ float readCO2ppm() {
 void setup() {
   Serial.begin(115200);
   dht.begin();
+  delay(2000); // DHT22 cần thời gian ổn định sau khi cấp nguồn trước lần đọc đầu tiên
   connectWiFi();
   connectMQTT();
   Serial.println("AirIQ ready — publishing every 5s");
@@ -143,8 +144,14 @@ void loop() {
   if (millis() - lastSend < SEND_INTERVAL_MS) return;
   lastSend = millis();
 
-  float temp = dht.readTemperature();
-  float hum  = dht.readHumidity();
+  // DHT22 thỉnh thoảng đọc trượt (nhất là trên simulator) — thử lại vài lần
+  // trước khi bỏ qua cả chu kỳ gửi.
+  float temp = NAN, hum = NAN;
+  for (int attempt = 0; attempt < 3 && (isnan(temp) || isnan(hum)); attempt++) {
+    if (attempt > 0) delay(300);
+    temp = dht.readTemperature();
+    hum  = dht.readHumidity();
+  }
 
   if (isnan(temp) || isnan(hum)) {
     Serial.println("[WARN] DHT22 read failed — skipping");
