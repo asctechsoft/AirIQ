@@ -8,14 +8,13 @@ const connectMQTT = () => {
     username: process.env.MQTT_USER,
     password: process.env.MQTT_PASS,
     clientId: `backend_${Math.random().toString(16).slice(2)}`,
-    rejectUnauthorized: false,
   });
 
   client.on('connect', () => {
     console.log('MQTT connected!');
-    client.subscribe('#', (err) => {
+    client.subscribe(process.env.MQTT_TOPIC, { qos: 1 }, (err) => {
       if (err) console.error('Subscribe error:', err);
-      else console.log('Subscribed to ALL topics!');
+      else console.log(`Subscribed to ${process.env.MQTT_TOPIC} (QoS 1)`);
     });
   });
 

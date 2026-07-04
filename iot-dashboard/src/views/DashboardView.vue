@@ -514,7 +514,28 @@ watch(activeTab, (tab) => {
   if (tab === 'history') fetchHistory()
 })
 
-const logout = () => { localStorage.removeItem('token'); router.push('/login') }
+const logout = async () => {
+  try {
+    await api.post('/auth/logout', { refreshToken: localStorage.getItem('refreshToken') })
+  } catch (err) { console.error(err) }
+  localStorage.removeItem('token')
+  localStorage.removeItem('refreshToken')
+  router.push('/login')
+}
+
+// ── Tự động đăng xuất nếu không thao tác gì trong 1 giờ (bảo mật) ──
+const IDLE_LIMIT_MS = 60 * 60 * 1000
+const ACTIVITY_EVENTS = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart']
+let idleTimer
+
+const handleIdleTimeout = () => {
+  alert('Phiên đăng nhập đã hết hạn do không hoạt động. Vui lòng đăng nhập lại để bảo mật.')
+  logout()
+}
+const resetIdleTimer = () => {
+  clearTimeout(idleTimer)
+  idleTimer = setTimeout(handleIdleTimeout, IDLE_LIMIT_MS)
+}
 
 let interval
 onMounted(async () => {
@@ -526,8 +547,15 @@ onMounted(async () => {
 
   await Promise.all([fetchLive(), fetchSettings(), fetchAlerts()])
   interval = setInterval(fetchLive, 5000)
+
+  resetIdleTimer()
+  ACTIVITY_EVENTS.forEach(evt => window.addEventListener(evt, resetIdleTimer))
 })
-onUnmounted(() => clearInterval(interval))
+onUnmounted(() => {
+  clearInterval(interval)
+  clearTimeout(idleTimer)
+  ACTIVITY_EVENTS.forEach(evt => window.removeEventListener(evt, resetIdleTimer))
+})
 </script>
 
 <style scoped>

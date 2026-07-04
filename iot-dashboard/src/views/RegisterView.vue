@@ -2,27 +2,29 @@
   <div class="login-container">
     <div class="login-box">
       <h1>🌬️ IoT Air Quality</h1>
-      <p>Hệ thống giám sát chất lượng không khí</p>
+      <p>Tạo tài khoản mới</p>
 
-      <form @submit.prevent="login">
+      <form @submit.prevent="register">
         <div class="form-group">
           <input v-model="email" type="email" placeholder="Email" autocomplete="username" />
         </div>
         <div class="form-group">
-          <input v-model="password" type="password" placeholder="Mật khẩu" autocomplete="current-password" />
+          <input v-model="password" type="password" placeholder="Mật khẩu (tối thiểu 6 ký tự)" autocomplete="new-password" />
+        </div>
+        <div class="form-group">
+          <input v-model="confirmPassword" type="password" placeholder="Nhập lại mật khẩu" autocomplete="new-password" />
         </div>
 
-        <p v-if="success" class="success">{{ success }}</p>
         <p v-if="error" class="error">{{ error }}</p>
 
         <button type="submit" :disabled="loading">
-          {{ loading ? "Đang đăng nhập..." : "Đăng nhập" }}
+          {{ loading ? "Đang đăng ký..." : "Đăng ký" }}
         </button>
       </form>
 
       <p class="switch-link">
-        Chưa có tài khoản?
-        <RouterLink to="/register">Đăng ký</RouterLink>
+        Đã có tài khoản?
+        <RouterLink to="/login">Đăng nhập</RouterLink>
       </p>
     </div>
   </div>
@@ -30,39 +32,43 @@
 
 <script setup>
 import { ref } from "vue";
-import { useRouter, useRoute, RouterLink } from "vue-router";
+import { useRouter, RouterLink } from "vue-router";
 import api from "../services/api";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const router = useRouter();
-const route = useRoute();
 const email = ref("");
 const password = ref("");
+const confirmPassword = ref("");
 const error = ref("");
-const success = ref(route.query.registered ? "Đăng ký thành công! Vui lòng đăng nhập." : "");
 const loading = ref(false);
 
-const login = async () => {
+const register = async () => {
   error.value = "";
-  success.value = "";
 
   if (!EMAIL_REGEX.test(email.value.trim())) {
     error.value = "Email không đúng định dạng!";
     return;
   }
+  if (password.value.length < 6) {
+    error.value = "Mật khẩu phải có ít nhất 6 ký tự!";
+    return;
+  }
+  if (password.value !== confirmPassword.value) {
+    error.value = "Mật khẩu nhập lại không khớp!";
+    return;
+  }
 
   loading.value = true;
   try {
-    const res = await api.post("/auth/login", {
+    await api.post("/auth/register", {
       email: email.value.trim(),
       password: password.value,
     });
-    localStorage.setItem("token", res.data.token);
-    localStorage.setItem("refreshToken", res.data.refreshToken);
-    router.push("/dashboard");
+    router.push({ path: "/login", query: { registered: "1" } });
   } catch (err) {
-    error.value = err.response?.data?.message || "Email hoặc mật khẩu không đúng!";
+    error.value = err.response?.data?.message || "Đăng ký thất bại, thử lại sau!";
   } finally {
     loading.value = false;
   }
@@ -124,11 +130,6 @@ button:disabled {
 }
 .error {
   color: red;
-  font-size: 13px;
-  margin-bottom: 8px;
-}
-.success {
-  color: #059669;
   font-size: 13px;
   margin-bottom: 8px;
 }

@@ -10,9 +10,20 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-app.use('/api/', rateLimit({
+// Rate limit riêng cho auth (chống brute-force login/register/refresh) — số request thấp vì
+// đây là các hành động không lặp lại liên tục.
+app.use('/api/auth', rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 30,
+  message: { message: 'Quá nhiều request, thử lại sau!' }
+}));
+
+// Rate limit chung cho các API còn lại. Dashboard polling mỗi 5s (~2 request/lần) nên cần
+// hạn mức rộng hơn nhiều so với auth — nếu để thấp sẽ tự chặn nhầm chính traffic hợp lệ,
+// kéo theo cả request refresh-token bị 429 và bắt đăng nhập lại oan.
+app.use('/api/', rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
   message: { message: 'Quá nhiều request, thử lại sau!' }
 }));
 

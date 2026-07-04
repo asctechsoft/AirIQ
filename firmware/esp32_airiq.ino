@@ -1,6 +1,6 @@
 /*
  * AirIQ - ESP32 Firmware
- * Sensors : DHT22 (temp + humidity), MQ135 (CO2 approx)
+ * Sensors : DHT22 (temp + humidity), Potentiometer trên pin 34 analog (giả lập CO2)
  * Protocol: MQTT over TLS → HiveMQ Cloud
  * Simulator: https://wokwi.com/projects/467067774859300865
  *
@@ -18,10 +18,15 @@
 #include <ArduinoJson.h>
 
 // ── WiFi ──────────────────────────────────────────────
-#define WIFI_SSID  "YOUR_WIFI_SSID"
-#define WIFI_PASS  "YOUR_WIFI_PASSWORD"
+// Wokwi chỉ kết nối được WiFi ảo với SSID cố định 'Wokwi-GUEST', password rỗng.
+#define WIFI_SSID  "Wokwi-GUEST"
+#define WIFI_PASS  ""
 
 // ── MQTT (HiveMQ Cloud) ───────────────────────────────
+// NOTE: HiveMQ Cloud Free chỉ cho 1 cặp credential duy nhất/cluster (không
+// tách được device vs backend ở tầng broker). Vì vậy KHÔNG share công khai
+// link Wokwi project này (nó chứa credential thật) — lớp xác thực thiết bị
+// thật sự nằm ở API_KEY bên dưới, được backend kiểm tra trước khi lưu DB.
 #define MQTT_HOST  "5a9350d651684013a992df08a435f3b4.s1.eu.hivemq.cloud"
 #define MQTT_PORT  8883
 #define MQTT_USER  "iot_dsp_talent"
@@ -32,10 +37,47 @@
 #define DEVICE_ID  "esp32-room1"
 #define API_KEY    "device-key-abc123"
 
+// ── HiveMQ Cloud TLS root CA (Let's Encrypt ISRG Root X1) ─
+// Xác thực chứng chỉ broker thay vì bỏ qua bằng setInsecure().
+// Verified bằng: openssl s_client -connect <host>:8883 -CAfile isrgrootx1.pem
+const char* HIVEMQ_ROOT_CA = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
+TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
+cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
+WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu
+ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY
+MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc
+h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+
+0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U
+A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW
+T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH
+B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC
+B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv
+KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn
+OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn
+jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw
+qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI
+rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV
+HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq
+hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL
+ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ
+3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK
+NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5
+ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur
+TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC
+jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc
+oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
+4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA
+mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
+emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
+-----END CERTIFICATE-----
+)EOF";
+
 // ── Pins ──────────────────────────────────────────────
-#define DHT_PIN    4
+#define DHT_PIN    15   // khớp với dây SDA nối vào esp:D15 trong diagram.json
 #define DHT_TYPE   DHT22
-#define MQ135_PIN  34   // ADC1 channel — must use ADC1 on ESP32
+#define CO2_POT_PIN 34   // Potentiometer wiper — ADC1 channel, phải dùng ADC1 trên ESP32
 
 // ── Timing ────────────────────────────────────────────
 #define SEND_INTERVAL_MS 5000
@@ -57,7 +99,7 @@ void connectWiFi() {
 
 // ── MQTT ──────────────────────────────────────────────
 void connectMQTT() {
-  espClient.setInsecure();
+  espClient.setCACert(HIVEMQ_ROOT_CA);
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setBufferSize(512);
 
@@ -73,13 +115,12 @@ void connectMQTT() {
   }
 }
 
-// ── CO2 estimation from MQ135 ─────────────────────────
-// Note: MQ135 requires ~24h burn-in for accurate readings.
-// This is a simplified linear mapping — calibrate RZERO for your unit.
+// ── CO2 simulation từ Potentiometer ────────────────────
+// Xoay volume trên Wokwi để đổi giá trị CO2 giả lập.
 float readCO2ppm() {
-  int   raw  = analogRead(MQ135_PIN);
+  int   raw  = analogRead(CO2_POT_PIN);
   float volt = raw * (3.3f / 4095.0f);
-  // Approx mapping: 0V → 400ppm (fresh air), 3.3V → 5000ppm
+  // Mapping: 0V (vặn hết trái) → 400ppm, 3.3V (vặn hết phải) → 5000ppm
   float ppm  = 400.0f + (volt / 3.3f) * 4600.0f;
   return constrain(ppm, 400.0f, 5000.0f);
 }
