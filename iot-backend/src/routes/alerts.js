@@ -14,6 +14,24 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
+// Thống kê nhanh cho dashboard cảnh báo (tổng số, chưa xử lý, phân theo loại)
+router.get('/stats', auth, async (req, res) => {
+  try {
+    const [total, unresolved, byTypeAgg] = await Promise.all([
+      Alert.countDocuments({}),
+      Alert.countDocuments({ resolved: false }),
+      Alert.aggregate([{ $group: { _id: '$type', count: { $sum: 1 } } }]),
+    ]);
+
+    const byType = { co2: 0, temperature: 0, humidity: 0 };
+    byTypeAgg.forEach(t => { byType[t._id] = t.count; });
+
+    res.json({ total, unresolved, byType });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 router.patch('/:id/resolve', auth, async (req, res) => {
   try {
     const alert = await Alert.findByIdAndUpdate(req.params.id, { resolved: true }, { new: true });

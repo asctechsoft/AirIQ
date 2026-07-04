@@ -48,49 +48,43 @@
       <!-- TAB: Dashboard -->
       <div v-if="activeTab === 'dashboard'" class="tab-content">
         <div class="metrics">
-          <div class="metric-card" :class="{ danger: tempStatus === 'danger' }">
-            <div class="metric-top">
-              <span class="metric-label">Nhiệt độ</span>
-              <span class="metric-icon">🌡️</span>
-            </div>
-            <div class="metric-value">{{ latest.temperature ?? '--' }}<span class="metric-unit">°C</span></div>
-            <div class="metric-bar">
-              <div class="metric-fill temp" :style="{ width: tempPct + '%' }"></div>
-            </div>
-            <div class="metric-hint" :class="tempStatus === 'danger' ? 'warn' : 'ok'">
-              {{ tempStatus === 'danger' ? '⚠ Quá nóng' : '✓ Bình thường' }}
-            </div>
-          </div>
+          <MetricGaugeCard
+            label="Nhiệt độ"
+            icon="🌡️"
+            :value="latest.temperature ?? '--'"
+            unit="°C"
+            :pct="tempPct"
+            :color="tempColor"
+            :ok="tempStatus !== 'danger'"
+            :hint="tempStatus === 'danger' ? '⚠ Quá nóng' : '✓ Bình thường'"
+            :sparkline-points="tempSparkline"
+          />
 
-          <div class="metric-card" :class="{ warning: humidityStatus === 'warning' }">
-            <div class="metric-top">
-              <span class="metric-label">Độ ẩm</span>
-              <span class="metric-icon">💧</span>
-            </div>
-            <div class="metric-value">{{ latest.humidity ?? '--' }}<span class="metric-unit">%</span></div>
-            <div class="metric-bar">
-              <div class="metric-fill hum" :style="{ width: (latest.humidity ?? 0) + '%' }"></div>
-            </div>
-            <div class="metric-hint" :class="humidityStatus === 'warning' ? 'warn' : 'ok'">
-              {{ humidityStatus === 'warning'
-                ? (latest.humidity < settings.humidity_min ? '⚠ Quá khô' : '⚠ Quá ẩm')
-                : '✓ Bình thường' }}
-            </div>
-          </div>
+          <MetricGaugeCard
+            label="Độ ẩm"
+            icon="💧"
+            :value="latest.humidity ?? '--'"
+            unit="%"
+            :pct="latest.humidity ?? 0"
+            :color="humidityColor"
+            :ok="humidityStatus !== 'warning'"
+            :hint="humidityStatus === 'warning'
+              ? (latest.humidity < settings.humidity_min ? '⚠ Quá khô' : '⚠ Quá ẩm')
+              : '✓ Bình thường'"
+            :sparkline-points="humiditySparkline"
+          />
 
-          <div class="metric-card" :class="{ danger: co2Status === 'danger', warning: co2Status === 'warning' }">
-            <div class="metric-top">
-              <span class="metric-label">CO₂</span>
-              <span class="metric-icon">💨</span>
-            </div>
-            <div class="metric-value">{{ latest.co2 ?? '--' }}<span class="metric-unit">ppm</span></div>
-            <div class="metric-bar">
-              <div class="metric-fill co2" :style="{ width: co2Pct + '%' }"></div>
-            </div>
-            <div class="metric-hint" :class="co2Status !== 'normal' ? 'warn' : 'ok'">
-              {{ co2Status === 'danger' ? '⚠ Nguy hiểm' : co2Status === 'warning' ? '⚠ CO₂ cao' : '✓ An toàn' }}
-            </div>
-          </div>
+          <MetricGaugeCard
+            label="CO₂"
+            icon="💨"
+            :value="latest.co2 ?? '--'"
+            unit="ppm"
+            :pct="co2Pct"
+            :color="co2Color"
+            :ok="co2Status === 'normal'"
+            :hint="co2Status === 'danger' ? '⚠ Nguy hiểm' : co2Status === 'warning' ? '⚠ CO₂ cao' : '✓ An toàn'"
+            :sparkline-points="co2Sparkline"
+          />
 
           <div class="metric-card info">
             <div class="metric-top">
@@ -105,14 +99,42 @@
           </div>
         </div>
 
-        <div class="chart-card">
-          <div class="chart-header">
-            <span class="chart-title">📊 Lịch sử theo thời gian thực</span>
-            <span class="chart-count">{{ history.length }} điểm dữ liệu</span>
+        <div class="mini-charts-header">
+          <span class="chart-title"><span class="live-dot"></span>📊 Theo dõi thời gian thực</span>
+          <span class="chart-count">{{ history.length }} điểm dữ liệu</span>
+        </div>
+        <div class="mini-charts">
+          <div class="chart-card mini">
+            <div class="chart-header"><span class="chart-title-sm">🌡️ Nhiệt độ (°C)</span></div>
+            <div class="chart-wrap">
+              <Line v-if="history.length" :data="tempChartData" :options="miniChartOptions" />
+              <div v-else class="no-data">Đang tải...</div>
+            </div>
+            <div v-if="tempWindowStats" class="mini-stats">
+              Min {{ tempWindowStats.min }} · Max {{ tempWindowStats.max }} · TB {{ tempWindowStats.avg }}
+            </div>
           </div>
-          <div class="chart-wrap">
-            <Line v-if="liveChartData.labels.length" :data="liveChartData" :options="chartOptions" />
-            <div v-else class="no-data">Đang tải dữ liệu...</div>
+
+          <div class="chart-card mini">
+            <div class="chart-header"><span class="chart-title-sm">💧 Độ ẩm (%)</span></div>
+            <div class="chart-wrap">
+              <Line v-if="history.length" :data="humidityChartData" :options="miniChartOptions" />
+              <div v-else class="no-data">Đang tải...</div>
+            </div>
+            <div v-if="humidityWindowStats" class="mini-stats">
+              Min {{ humidityWindowStats.min }} · Max {{ humidityWindowStats.max }} · TB {{ humidityWindowStats.avg }}
+            </div>
+          </div>
+
+          <div class="chart-card mini">
+            <div class="chart-header"><span class="chart-title-sm">💨 CO₂ (ppm)</span></div>
+            <div class="chart-wrap">
+              <Line v-if="history.length" :data="co2ChartData" :options="miniChartOptions" />
+              <div v-else class="no-data">Đang tải...</div>
+            </div>
+            <div v-if="co2WindowStats" class="mini-stats">
+              Min {{ co2WindowStats.min }} · Max {{ co2WindowStats.max }} · TB {{ co2WindowStats.avg }}
+            </div>
           </div>
         </div>
       </div>
@@ -160,6 +182,24 @@
 
       <!-- TAB: Alerts -->
       <div v-if="activeTab === 'alerts'" class="tab-content">
+        <div class="alert-stats-row">
+          <div class="stat-card">
+            <span class="stat-card-value">{{ alertStats.total }}</span>
+            <span class="stat-card-label">Tổng cảnh báo</span>
+          </div>
+          <div class="stat-card" :class="{ warn: alertStats.unresolved > 0 }">
+            <span class="stat-card-value">{{ alertStats.unresolved }}</span>
+            <span class="stat-card-label">Chưa xử lý</span>
+          </div>
+          <div class="stat-card type-card">
+            <span class="stat-card-label">Theo loại</span>
+            <div class="type-bar-wrap">
+              <Bar v-if="alertStats.total > 0" :data="alertTypeChartData" :options="alertTypeChartOptions" />
+              <div v-else class="no-data small">Chưa có dữ liệu</div>
+            </div>
+          </div>
+        </div>
+
         <div class="alerts-toolbar">
           <div class="filter-tabs">
             <button
@@ -174,7 +214,7 @@
               @click="setAlertFilter('all')"
             >Tất cả</button>
           </div>
-          <button class="btn-ghost" @click="fetchAlerts">🔄 Làm mới</button>
+          <button class="btn-ghost" @click="fetchAlerts(); fetchAlertStats()">🔄 Làm mới</button>
         </div>
 
         <div v-if="alertsLoading" class="empty-state"><p>Đang tải...</p></div>
@@ -280,14 +320,15 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { Line } from 'vue-chartjs'
+import { Line, Bar } from 'vue-chartjs'
 import {
   Chart as ChartJS, CategoryScale, LinearScale,
-  PointElement, LineElement, Title, Tooltip, Legend
+  PointElement, LineElement, BarElement, Filler, Title, Tooltip, Legend
 } from 'chart.js'
 import api from '../services/api'
+import MetricGaugeCard from '../components/MetricGaugeCard.vue'
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend)
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Filler, Title, Tooltip, Legend)
 
 const router = useRouter()
 const activeTab = ref('dashboard')
@@ -299,6 +340,7 @@ const lastUpdate = ref('--')
 const alertsData = ref([])
 const alertFilter = ref('unresolved')
 const alertsLoading = ref(false)
+const alertStats = ref({ total: 0, unresolved: 0, byType: { co2: 0, temperature: 0, humidity: 0 } })
 
 // History
 const histFrom = ref('')
@@ -342,6 +384,29 @@ const co2Status = computed(() => {
 const tempPct = computed(() => Math.min(((latest.value.temperature ?? 0) / 50) * 100, 100))
 const co2Pct  = computed(() => Math.min(((latest.value.co2 ?? 0) / 2000) * 100, 100))
 
+// ── Màu gauge theo mức độ (good/warning/critical) ──────
+const STATUS_COLORS = { normal: '#0ca30c', warning: '#fab219', danger: '#d03b3b' }
+const tempColor     = computed(() => STATUS_COLORS[tempStatus.value])
+const humidityColor = computed(() => STATUS_COLORS[humidityStatus.value])
+const co2Color      = computed(() => STATUS_COLORS[co2Status.value])
+
+// ── Sparkline xu hướng (dùng cùng thang % với gauge) ───
+const buildSparkline = (key, toPct) => {
+  const points = history.value.slice(-20).filter(d => d[key] != null)
+  if (points.length < 2) return ''
+  const w = 100, h = 28
+  return points
+    .map((d, i) => {
+      const x = (i / (points.length - 1)) * w
+      const y = h - (Math.min(Math.max(toPct(d[key]), 0), 100) / 100) * h
+      return `${x.toFixed(1)},${y.toFixed(1)}`
+    })
+    .join(' ')
+}
+const tempSparkline     = computed(() => buildSparkline('temperature', v => (v / 50) * 100))
+const humiditySparkline = computed(() => buildSparkline('humidity', v => v))
+const co2Sparkline      = computed(() => buildSparkline('co2', v => (v / 2000) * 100))
+
 const airQualityClass = computed(() => {
   if (co2Status.value === 'danger' || tempStatus.value === 'danger') return 'aqi-danger'
   if (co2Status.value === 'warning' || humidityStatus.value === 'warning') return 'aqi-warn'
@@ -379,10 +444,44 @@ const buildDatasets = (source) => ([
   },
 ])
 
-const liveChartData = computed(() => ({
+// ── Dashboard: 3 mini chart riêng (mỗi đại lượng 1 trục) ──
+// Gộp chung 1 trục sẽ làm nhiệt độ/độ ẩm trông phẳng lì cạnh CO2 (khác đơn vị,
+// khác biên độ) nên tách nhỏ mỗi cái 1 chart, tự scale theo dữ liệu của nó.
+const miniChartOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { display: false } },
+  scales: {
+    x: { ticks: { maxTicksLimit: 6, font: { size: 9 } }, grid: { display: false } },
+    y: { ticks: { font: { size: 9 } }, grid: { color: 'rgba(0,0,0,0.04)' } },
+  },
+}
+
+const buildMiniChart = (key, color, bg) => computed(() => ({
   labels: history.value.map(d => formatTime(d.timestamp)),
-  datasets: buildDatasets(history.value),
+  datasets: [{
+    data: history.value.map(d => d[key]),
+    borderColor: color, backgroundColor: bg,
+    fill: true, tension: 0.4, pointRadius: 0, borderWidth: 2,
+  }],
 }))
+
+const tempChartData     = buildMiniChart('temperature', '#ef4444', 'rgba(239,68,68,0.10)')
+const humidityChartData = buildMiniChart('humidity', '#3b82f6', 'rgba(59,130,246,0.10)')
+const co2ChartData      = buildMiniChart('co2', '#10b981', 'rgba(16,185,129,0.10)')
+
+const computeWindowStats = (values, digits = 1) => {
+  const valid = values.filter(v => v != null && !Number.isNaN(v))
+  if (!valid.length) return null
+  return {
+    min: Math.min(...valid).toFixed(digits),
+    max: Math.max(...valid).toFixed(digits),
+    avg: (valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(digits),
+  }
+}
+const tempWindowStats     = computed(() => computeWindowStats(history.value.map(d => d.temperature)))
+const humidityWindowStats = computed(() => computeWindowStats(history.value.map(d => d.humidity)))
+const co2WindowStats      = computed(() => computeWindowStats(history.value.map(d => d.co2), 0))
 
 const histChartData = computed(() => ({
   labels: histData.value.map(d => formatDateTime(d.timestamp)),
@@ -410,6 +509,31 @@ const chartOptions = {
     x: { ticks: { maxTicksLimit: 10, font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.04)' } },
     y: { ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.04)' } }
   }
+}
+
+// ── Cảnh báo theo loại — dùng đúng màu identity đã dùng ở list cảnh báo ──
+const ALERT_TYPE_COLORS = { co2: '#10b981', temperature: '#ef4444', humidity: '#3b82f6' }
+const ALERT_TYPE_LABELS = { co2: 'CO₂', temperature: 'Nhiệt độ', humidity: 'Độ ẩm' }
+const ALERT_TYPES = ['co2', 'temperature', 'humidity']
+
+const alertTypeChartData = computed(() => ({
+  labels: ALERT_TYPES.map(t => ALERT_TYPE_LABELS[t]),
+  datasets: [{
+    data: ALERT_TYPES.map(t => alertStats.value.byType[t] || 0),
+    backgroundColor: ALERT_TYPES.map(t => ALERT_TYPE_COLORS[t]),
+    borderRadius: 6,
+    barThickness: 22,
+  }],
+}))
+const alertTypeChartOptions = {
+  indexAxis: 'y',
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { display: false } },
+  scales: {
+    x: { beginAtZero: true, ticks: { precision: 0, font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.04)' } },
+    y: { ticks: { font: { size: 11 } }, grid: { display: false } },
+  },
 }
 
 // ── API calls ──────────────────────────────────────────
@@ -441,6 +565,13 @@ const fetchAlerts = async () => {
   }
 }
 
+const fetchAlertStats = async () => {
+  try {
+    const res = await api.get('/alerts/stats')
+    alertStats.value = res.data
+  } catch (err) { console.error(err) }
+}
+
 const setAlertFilter = (f) => { alertFilter.value = f }
 watch(alertFilter, fetchAlerts)
 
@@ -453,6 +584,7 @@ const resolveAlert = async (id) => {
       const idx = alertsData.value.findIndex(a => a._id === id)
       if (idx !== -1) alertsData.value[idx] = { ...alertsData.value[idx], resolved: true }
     }
+    fetchAlertStats()
   } catch (err) { console.error(err) }
 }
 
@@ -460,6 +592,7 @@ const deleteAlert = async (id) => {
   try {
     await api.delete(`/alerts/${id}`)
     alertsData.value = alertsData.value.filter(a => a._id !== id)
+    fetchAlertStats()
   } catch (err) { console.error(err) }
 }
 
@@ -510,7 +643,7 @@ const saveSettings = async () => {
 
 // Fetch khi chuyển tab
 watch(activeTab, (tab) => {
-  if (tab === 'alerts')  fetchAlerts()
+  if (tab === 'alerts')  { fetchAlerts(); fetchAlertStats() }
   if (tab === 'history') fetchHistory()
 })
 
@@ -685,8 +818,6 @@ onUnmounted(() => {
   border-left: 3px solid #3b82f6;
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
 }
-.metric-card.danger  { border-left-color: #ef4444; }
-.metric-card.warning { border-left-color: #f59e0b; }
 .metric-card.info    { border-left-color: #8b5cf6; }
 .metric-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 .metric-label { font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -696,9 +827,6 @@ onUnmounted(() => {
 .metric-unit  { font-size: 13px; font-weight: 500; color: #94a3b8; margin-left: 2px; }
 .metric-bar   { height: 4px; background: #f1f5f9; border-radius: 2px; overflow: hidden; margin-bottom: 6px; }
 .metric-fill  { height: 100%; border-radius: 2px; transition: width 0.5s ease; }
-.metric-fill.temp      { background: #ef4444; }
-.metric-fill.hum       { background: #3b82f6; }
-.metric-fill.co2       { background: #10b981; }
 .metric-fill.info-fill { background: #8b5cf6; }
 .metric-hint      { font-size: 11px; font-weight: 500; }
 .metric-hint.ok   { color: #22c55e; }
@@ -717,10 +845,47 @@ onUnmounted(() => {
 }
 .chart-card.chart-grow { flex: 1; height: auto; min-height: 280px; }
 .chart-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-shrink: 0; }
-.chart-title  { font-size: 13px; font-weight: 600; color: #0f172a; }
+.chart-title  { font-size: 13px; font-weight: 600; color: #0f172a; display: inline-flex; align-items: center; }
 .chart-count  { font-size: 11px; color: #94a3b8; }
 .chart-wrap   { flex: 1; min-height: 0; position: relative; }
 .no-data { display: flex; align-items: center; justify-content: center; height: 100%; color: #94a3b8; font-size: 13px; }
+
+.live-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #0ca30c;
+  margin-right: 7px;
+  animation: live-pulse 1.6s ease-in-out infinite;
+}
+@keyframes live-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(12, 163, 12, 0.5); }
+  50%      { box-shadow: 0 0 0 5px rgba(12, 163, 12, 0); }
+}
+
+/* ── Mini charts (small multiples) ── */
+.mini-charts-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+.mini-charts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  flex-shrink: 0;
+}
+.chart-card.mini { height: 220px; padding: 12px 14px; }
+.chart-title-sm { font-size: 12px; font-weight: 600; color: #0f172a; }
+.mini-stats {
+  font-size: 10px;
+  color: #94a3b8;
+  text-align: center;
+  padding-top: 6px;
+  flex-shrink: 0;
+}
 
 /* ── History tab ── */
 .history-tab { overflow-y: auto; }
@@ -796,6 +961,29 @@ onUnmounted(() => {
 .btn-ghost:hover { background: #f8fafc; }
 
 /* ── Alerts ── */
+.alert-stats-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 2fr;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.stat-card {
+  background: white;
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+.stat-card-value { font-size: 26px; font-weight: 800; color: #0f172a; line-height: 1; }
+.stat-card-label { font-size: 11px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+.stat-card.warn .stat-card-value { color: #d03b3b; }
+.stat-card.type-card { gap: 8px; }
+.type-bar-wrap { flex: 1; min-height: 72px; position: relative; }
+.no-data.small { font-size: 11px; height: 72px; }
+
 .alerts-toolbar {
   display: flex;
   align-items: center;
@@ -928,12 +1116,15 @@ onUnmounted(() => {
   .logout-btn { font-size: 0; padding: 8px; text-align: center; }
   .logout-btn::before { content: '⎋'; font-size: 14px; }
   .metrics { grid-template-columns: 1fr 1fr; }
+  .mini-charts { grid-template-columns: 1fr; }
+  .alert-stats-row { grid-template-columns: 1fr 1fr; }
   .topbar { padding: 10px 14px; }
   .tab-content { padding: 10px 12px; }
 }
 
 @media (max-width: 480px) {
   .metrics { grid-template-columns: 1fr; }
+  .alert-stats-row { grid-template-columns: 1fr; }
   .settings-grid { grid-template-columns: 1fr; }
   .hist-toolbar { flex-direction: column; align-items: stretch; }
   .hist-actions { flex-direction: row; }
