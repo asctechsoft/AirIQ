@@ -3,7 +3,7 @@
     <!-- Sidebar -->
     <aside class="sidebar">
       <div class="brand">
-        <span class="brand-icon">🌬️</span>
+        <img :src="logo" class="brand-logo" alt="AirIQ" />
         <span class="brand-name">AirIQ</span>
       </div>
 
@@ -369,6 +369,7 @@ import {
 } from 'chart.js'
 import api from '../services/api'
 import MetricGaugeCard from '../components/MetricGaugeCard.vue'
+import logo from '../assets/logo.jpg'
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Filler, Title, Tooltip, Legend)
 
@@ -488,8 +489,8 @@ const miniChartOptions = {
   maintainAspectRatio: false,
   plugins: { legend: { display: false } },
   scales: {
-    x: { ticks: { maxTicksLimit: 6, font: { size: 9 } }, grid: { display: false } },
-    y: { ticks: { font: { size: 9 } }, grid: { color: 'rgba(0,0,0,0.04)' } },
+    x: { ticks: { maxTicksLimit: 6, color: '#475569', font: { size: 13, weight: 500 } }, grid: { display: false } },
+    y: { ticks: { color: '#475569', font: { size: 13, weight: 500 } }, grid: { color: 'rgba(0,0,0,0.04)' } },
   },
 }
 
@@ -801,6 +802,13 @@ onUnmounted(() => {
   border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 .brand-icon { font-size: 22px; }
+.brand-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
 .brand-name { color: white; font-weight: 700; font-size: 16px; }
 
 .nav { flex: 1; padding: 12px 8px; display: flex; flex-direction: column; gap: 4px; }

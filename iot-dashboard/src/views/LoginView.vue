@@ -1,8 +1,8 @@
 <template>
   <div class="login-container">
     <div class="login-box">
-      <h1>🌬️ IoT Air Quality</h1>
-      <p>Hệ thống giám sát chất lượng không khí</p>
+      <img :src="logo" class="auth-logo" alt="AirIQ" />
+      <h1>Chất lượng không khí IOT</h1>
 
       <form @submit.prevent="login">
         <div class="form-group">
@@ -32,6 +32,7 @@
 import { ref } from "vue";
 import { useRouter, useRoute, RouterLink } from "vue-router";
 import api from "../services/api";
+import logo from "../assets/logo.jpg";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -84,6 +85,15 @@ const login = async () => {
   width: 360px;
   text-align: center;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+.auth-logo {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  object-fit: cover;
+  display: block;
+  margin: 0 auto 14px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
 }
 h1 {
   color: #1a73e8;
